@@ -1,0 +1,22 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+credentials/
+secrets/
+
+# Local state and scan outputs
+n8n_data/
+.n8n/
+reports/
+exports/
+*.sqlite
+*.sqlite-*
+*.log
+
+# Dependencies and editor/system files
+node_modules/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
