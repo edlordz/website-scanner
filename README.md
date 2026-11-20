@@ -1,94 +1,108 @@
 # AI-Assisted Website Scanner
 
-A local website audit prototype built with n8n, Ollama, and JavaScript. It combines evidence-based HTML checks with an AI-generated page summary and a small sample of HTTP link checks.
+A local website audit prototype using n8n, Ollama, and JavaScript. It combines HTML presence checks, a local AI summary, and HTTP checks for a small sample of links.
 
-**Status: working demo, not a general-purpose website scanner or production service.** Version 1 targets the [Books to Scrape](https://books.toscrape.com/) homepage.
+**Current milestone: v2.** This is a development prototype, not a complete website audit or an automated repair service. The configured demonstration target is [Books to Scrape](https://books.toscrape.com/).
 
-## What it does
+## Features
 
-- Fetches a page and extracts its title, body text, meta description, H1 headings, and links.
-- Checks for a nonempty title, meta description, and H1 heading in the fetched HTML.
-- Uses a local Ollama model to summarize the supplied page evidence.
-- Removes duplicate eligible links and checks up to five.
-- Classifies HTTP responses and produces one JSON report with evidence, timestamps, scope, and counts.
+- Extracts the page title, body text, meta description, H1 headings, and links from fetched HTML.
+- Checks for nonempty titles, descriptions, and H1 headings using JavaScript rules.
+- Generates a structured page summary using Ollama. The model receives page content rather than scanner check metadata.
+- Resolves relative and absolute URLs with Node's URL parser, removes fragments and duplicates, and selects up to five HTTP(S) links on the same origin.
+- Routes pages with no eligible links directly to a report marked `not_checked`.
+- Classifies HTTP responses and continues after failed link requests, marking them `unverified`.
+- Produces one JSON report with evidence, timestamps, coverage limits, and link counts.
 
-The AI writes the summary. JavaScript rules determine the presence checks and HTTP status classifications. No custom model training is involved.
+The AI describes the supplied content; deterministic code generates check results. This project uses an existing model and does not train a custom model.
 
-## Workflow
+## Repository files
 
-| Node | Purpose |
-| --- | --- |
-| When clicking ‘Execute workflow’ | Start a manual scan |
-| Scan Settings | Set the demo URL |
-| Fetch Website | Download HTML |
-| Extract Page Content | Extract page evidence |
-| Check Page Basics | Run three presence checks |
-| Analyse Page | Request a structured Ollama summary |
-| Parse Analysis | Validate the summary and retain evidence |
-| Prepare Links | Select five unique eligible demo links |
-| Check Link Status | Request each selected URL |
-| Classify Link Result | Classify its HTTP response |
-| Build Scan Report | Combine the results |
+- `workflows/website-scanner-v1.json`: original demo milestone, restricted to selected Books to Scrape paths.
+- `workflows/website-scanner-v2.json`: current workflow with URL parsing, empty-link branching, and link-request error handling.
 
-## Run locally
+## Local setup
 
-The development setup uses Windows, Docker Desktop with a persistent n8n volume, and Ollama running on the host computer.
+The tested environment is Windows, Docker Desktop, n8n **2.42.7**, and Ollama on the host computer. n8n's data is stored in the persistent `n8n_data` volume mounted at `/home/node/.n8n`.
 
-1. Start your local n8n container and Ollama.
-2. Ensure your Ollama installation has the `qwen3:4b` model available. The tested installation supports thinking and structured JSON output; the workflow sends `think: true`.
-3. Open n8n and import `workflows/website-scanner-v1.json` using its workflow import option.
-4. Check the **Analyse Page** endpoint: `http://host.docker.internal:11434/api/chat`. This address connects the Docker container to Ollama on the host. Other deployments may need a different address or host networking configuration.
-5. Leave **Scan Settings** at `https://books.toscrape.com/`. Version 1 deliberately rejects other addresses in **Prepare Links**.
+1. Start Ollama with `qwen3:4b` available. The tested model supports thinking and structured output; this workflow sends `think: true`.
+2. Start n8n with the built-in `url` module allowed: `NODE_FUNCTION_ALLOW_BUILTIN=url`. In this tested internal-runner setup, the variable is on the n8n container. External runners require their own module configuration. Changing a container's environment requires recreating it while retaining its data volume; restarting alone does not add the setting.
+3. Open your local n8n editor and import `workflows/website-scanner-v2.json` into a new workflow.
+4. Check **Analyse Page**: its endpoint is `http://host.docker.internal:11434/api/chat`, connecting Docker to Ollama on the host. Other deployments may require a different address.
+5. Keep **Scan Settings** at `https://books.toscrape.com/` for the initial verification.
 6. Execute the workflow and inspect **Build Scan Report**.
 
-Keep the node names unchanged unless you also update the code references. This export uses HTTP Request node version 4.5, Code version 2, and HTML version 1.2; the exact n8n application version was not recorded.
+Keep node names aligned with their JavaScript references. No paid AI API key is used. Hardware, electricity, and connectivity remain necessary.
 
-No paid AI API key is used. Running the software still requires your own hardware, internet connection, and electricity.
+Relevant documentation: [module access](https://docs.n8n.io/hosting/configuration/configuration-examples/modules-in-code-node/) and [task runners](https://docs.n8n.io/hosting/configuration/task-runners/).
 
-## Results and interpretation
+## Workflow design
 
-- `pageChecks`: presence checks with evidence; missing elements are marked `needs_review`.
-- `aiAnalysis`: page purpose and summary, which may contain model errors.
-- `linkSummary`: counts of checked, passed, broken, review-needed, and unverified links.
-- `linkResults`: source URL, requested URL, HTTP status, classification, reason, and timestamp.
-- `scope` and `checksNotPerformed`: explicit coverage limits.
+The initial sequence fetches and extracts the page, checks its basic elements, and requests and parses the AI summary. **Prepare Links** then selects the link sample.
 
-HTTP 2xx responses are marked `pass`; 404/410 are marked `broken`. Authentication failures and rate limiting are marked `unverified`. Server errors require review. A successful HTTP response does not prove that the page content or functionality is correct.
+```mermaid
+flowchart TD
+    A[Prepare Links] --> B[No Links to Check]
+    B -->|true| E[Build Scan Report]
+    B -->|false| C[Check Link Status]
+    C --> D[Classify Link Result]
+    D --> E
+```
 
-## Validation completed
+## Result interpretation
 
-Manual runs in the development environment confirmed:
+| Result | Meaning |
+| --- | --- |
+| Page check `pass` | A nonempty element was found in fetched HTML |
+| Page check `needs_review` | The expected nonempty element was not found |
+| Link `pass` | HTTP response was 2xx |
+| Link `broken` | HTTP response was 404 or 410 |
+| Link `unverified` | Request failed, no status was available, access was denied, or rate limiting occurred |
+| Link `needs_review` | Other response, such as a server error |
+| Summary `not_checked` | No eligible links were selected |
+| Summary `completed` | The selected requests were processed; this can include failures |
 
-- Structured Ollama output could be parsed and combined with page evidence.
-- The selected five demo links returned 200 and were classified as `pass`.
-- A temporary, deliberately nonexistent test address returned 404 and was classified as `broken`.
-- The temporary test address was removed, and the combined report returned five passes.
+The `checked` count records attempted links, including unverified attempts. Neither a 2xx response nor a `completed` summary proves that a whole website is healthy.
 
-These are manual observations, not a comprehensive automated test suite. The repository copy has had instance-specific metadata removed and whitespace trimmed from the Ollama URL. Its JSON and connections were validated, but this cleaned copy has not yet been re-imported and executed.
+## Manual validation
 
-## Current limitations
+Observed in the development environment:
 
-- URL handling is restricted to selected relative paths on the demo homepage. Redirect destinations, HTML base tags, and general URL resolution are not handled.
-- Only five eligible links are checked; no recursive crawling is performed.
-- If no eligible links exist, the current workflow emits no link items and may not produce the final report.
-- Network failures, timeouts, and Ollama failures can stop the workflow. HTTP error-response handling does not cover transport failures.
-- Fetch failures are not yet gated before HTML checks; an error page could be analysed as content.
-- JavaScript is not rendered. No visual, performance, accessibility, form, or booking tests are performed.
-- There is no database, dashboard, scheduling, client authentication, or automated website repair.
-- This is a local demo, not a public URL-submission service. Generalized fetching will need validation and network restrictions before public deployment.
+- Five selected links returned 200 and produced five passes.
+- A deliberately nonexistent path returned 404 and was labelled `broken`.
+- A simulated empty link list followed the true branch and produced a report with zero checks and `not_checked`.
+- One temporary `.invalid` URL produced an `unverified` result while four normal requests passed; the failing URL remained correctly associated with its result.
+- Temporary input overrides were removed after testing. The export contains normal link extraction and no injected network-test address.
+- The AI summary improved after scanner metadata was removed from its input and the prompt was narrowed to content description.
 
-## Planned improvements
+The link timeout is configured to 15,000 ms, but a deliberate timeout has not been separately tested. These are manual checks, not a comprehensive automated test suite.
 
-1. General URL resolution and explicit scan limits.
-2. Empty-link handling, fetch-status checks, and recoverable network errors.
+The shared export was checked for JSON validity, node references, branch routing, error configuration, and leftover test injections. Instance-specific metadata was removed and a leading tab was trimmed from the Ollama endpoint. The cleaned export has not yet been re-imported and executed.
+
+## Known limitations
+
+- Only one page and up to five eligible same-origin links are inspected; no recursive crawling.
+- Relative URLs are resolved against the requested URL. Redirected source pages and HTML `<base>` elements are not yet handled correctly.
+- Same-origin selection applies before requests; HTTP redirects can lead elsewhere.
+- The initial page fetch and Ollama call can still stop the workflow. Fetch errors are not gated before HTML extraction, so an error page could be analysed as page content.
+- JavaScript is not rendered. Page presence checks do not prove visual quality, accessibility, performance, or working forms and bookings.
+- AI summaries may be inaccurate. Prompts reduce unsupported claims but do not guarantee correctness or prevent every prompt-injection attempt.
+- No persistent scan history, dashboard, scheduling, client authentication, or automated fixes yet.
+- This remains a local prototype, not a public URL-submission service. Input validation, network restrictions, and redirect handling are required before public deployment.
+- The report's scope text still says “homepage”; the intended demo scans the homepage, but the configuration can accept other page URLs.
+
+## Next milestones
+
+1. Initial fetch validation and graceful AI/fetch failures.
+2. Correct handling of redirects and HTML base URLs.
 3. Saved scan history and issue tracking.
-4. A dashboard showing open, in-progress, resolved, and unverified findings.
-5. Human-reviewed remediation suggestions and rescans.
+4. Dashboard with open, in-progress, resolved, and unverified findings.
+5. Human-reviewed remediation suggestions and verification through rescans.
 
-## Export notes
+## Sharing and updates
 
-The shared workflow contains no configured credentials or pinned execution data. Instance/workflow/version identifiers were removed; internal node IDs remain to preserve the workflow structure. The local Ollama hostname is configuration, not a password.
+n8n edits are not automatically synchronized to GitHub. Export each milestone, review it for secrets or private data, and commit the reviewed workflow and documentation.
 
-Before sharing future exports, inspect them again: credentials, private URLs, headers, and pinned data can change as the project grows. `.gitignore` cannot remove secrets embedded inside a tracked JSON file.
+This export contains no configured credentials or pinned execution data. Future exports must be reviewed again. Keep local n8n backups outside the repository: they may include account data and encryption keys. `.gitignore` cannot remove secrets embedded in tracked workflow JSON.
 
-No project license has been selected yet. Dependencies retain their own licenses.
+No project license has been selected. Dependencies retain their own licenses.
