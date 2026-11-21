@@ -1,0 +1,166 @@
+{
+  "name": "Scan History",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "value": "HiTlB0OPTS4Y2Oca",
+          "mode": "list",
+          "cachedResultName": "website_scans",
+          "cachedResultUrl": "/projects/Fjck56L4d9lHyguM/datatables/HiTlB0OPTS4Y2Oca"
+        },
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "c8f82d1d-ba1b-44d3-b946-5f6f1a0707e9",
+      "name": "Load Saved Scans"
+    },
+    {
+      "parameters": {
+        "jsCode": "const scans = $input.all().map(({ json: row }) => {\n  let report = null;\n  let reportError = null;\n\n  try {\n    report = JSON.parse(row.report_json);\n    if (!report || typeof report !== \"object\" || Array.isArray(report)) {\n      throw new Error(\"Expected a report object\");\n    }\n  } catch {\n    report = null;\n    reportError = \"The saved report could not be read.\";\n  }\n\n  return {\n    id: row.id,\n    scannedUrl: row.scanned_url,\n    scanCompletedAt: row.scan_completed_at,\n    scanStatus: row.scan_status,\n    report,\n    reportError\n  };\n});\n\nscans.sort((a, b) =>\n  Date.parse(b.scanCompletedAt) - Date.parse(a.scanCompletedAt)\n);\n\nreturn [{ json: { scans } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "a6830d1c-3068-4b46-8b71-ffa10637e3a8",
+      "name": "Format Scan History"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { scans } = $input.first().json;\n\nreturn [{\n  json: {\n    scans: scans.map(scan => {\n      const report = scan.report;\n      const pageReviews = report?.pageReviewCount ?? null;\n      const links = report?.linkSummary;\n      let displayStatus;\n      let displayReason = null;\n\n      if (scan.scanStatus === \"failed\") {\n        displayStatus = \"Scan failed\";\n        displayReason = report?.failureReason ?? scan.reportError;\n      } else if (!report) {\n        displayStatus = \"Report unavailable\";\n        displayReason = scan.reportError;\n      } else if (pageReviews > 0 || links?.broken > 0 || links?.needsReview > 0) {\n        displayStatus = \"Needs review\";\n      } else if (pageReviews === null || links?.status !== \"completed\" || links?.unverified > 0) {\n        displayStatus = \"Checks incomplete\";\n      } else {\n        displayStatus = \"No issues found in sampled checks\";\n      }\n\n      return { ...scan, displayStatus, displayReason };\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        0
+      ],
+      "id": "5f03ddfb-d668-4a83-8edb-46b2caad1d6b",
+      "name": "Summarize Scan History"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { scans } = $input.first().json;\n\nconst escape = value => String(value ?? \"\").replace(/[&<>\"']/g, char => ({\n  \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\"\n})[char]);\n\nconst cards = scans.map(scan => {\n  const checks = (scan.report?.pageChecks ?? []).map(check =>\n    `<li><strong>${escape(check.label)}:</strong> ${escape(check.evidence)}</li>`\n  ).join(\"\");\n\n  const links = scan.report?.linkSummary;\n  const linkLine = links?.status === \"completed\"\n    ? `<p>Links: ${escape(links.checked)} checked, ${escape(links.broken)} broken, ${escape(links.unverified)} unverified.</p>`\n    : \"\";\n\n  return `<details>\n    <summary><strong>${escape(scan.displayStatus)}</strong> · ${escape(scan.scannedUrl)}</summary>\n    <p>Scan #${escape(scan.id)} · ${escape(scan.scanCompletedAt)}</p>\n    ${scan.displayReason ? `<p>${escape(scan.displayReason)}</p>` : \"\"}\n    ${checks ? `<ul>${checks}</ul>` : \"\"}\n    ${linkLine}\n  </details>`;\n}).join(\"\");\n\nreturn [{ json: { html: `<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Scan History</title>\n<style>\n  body { font: 16px system-ui; max-width: 760px; margin: 40px auto; padding: 0 20px; }\n  details { border: 1px solid #ccc; border-radius: 8px; padding: 14px; margin: 12px 0; }\n  summary { cursor: pointer; overflow-wrap: anywhere; }\n</style></head><body>\n  <h1>Scan History</h1>\n  <p>${scans.length} saved scans · newest first</p>\n  ${cards || \"<p>No scans saved yet.</p>\"}\n</body></html>` } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        864,
+        0
+      ],
+      "id": "dd3b1dba-c327-43c0-8d91-f5032d769757",
+      "name": "Render Scan History"
+    },
+    {
+      "parameters": {
+        "path": "scan-history",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -32,
+        0
+      ],
+      "id": "64364a6b-03f3-4e30-af12-acc58324dfba",
+      "name": "Webhook",
+      "webhookId": "d9d4ddef-32ec-4d5e-befc-497ad029d853"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1088,
+        0
+      ],
+      "id": "e7b43e07-d5e3-474f-bc86-0ec6937ec942",
+      "name": "Respond to Webhook"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Load Saved Scans": {
+      "main": [
+        [
+          {
+            "node": "Format Scan History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Scan History": {
+      "main": [
+        [
+          {
+            "node": "Summarize Scan History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Scan History": {
+      "main": [
+        [
+          {
+            "node": "Render Scan History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Saved Scans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Scan History": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "43a97855-a3dc-4af1-b5e8-483bcd8c5245",
+  "meta": {
+    "instanceId": "504779009240797302d3c633b30deeb081a4ae6f1f2e2f203e2f4352c1056158"
+  },
+  "nodeGroups": [],
+  "id": "uWtToCXyuDbJ3gwj",
+  "tags": []
+}
