@@ -1,108 +1,66 @@
 # AI-Assisted Website Scanner
 
-A local website audit prototype using n8n, Ollama, and JavaScript. It combines HTML presence checks, a local AI summary, and HTTP checks for a small sample of links.
+A local website audit prototype built with n8n, Ollama, and JavaScript. It checks one page and a small sample of its links, saves the report, and shows scan history and unresolved meta description findings in a browser. The demo target is [Books to Scrape](https://books.toscrape.com/).
 
-**Current milestone: v2.** This is a development prototype, not a complete website audit or an automated repair service. The configured demonstration target is [Books to Scrape](https://books.toscrape.com/).
+| Workflow | What it does |
+| --- | --- |
+| [Website Scanner v4](workflows/website-scanner-v4.json) | Fetches a page, checks its title, meta description and H1, samples up to five eligible same-origin links, and saves one report per run. |
+| [Scan History v2](workflows/scan-history-v2.json) | Reads saved reports, shows the newest first, and flags unresolved meta description findings. |
 
-## Features
-
-- Extracts the page title, body text, meta description, H1 headings, and links from fetched HTML.
-- Checks for nonempty titles, descriptions, and H1 headings using JavaScript rules.
-- Generates a structured page summary using Ollama. The model receives page content rather than scanner check metadata.
-- Resolves relative and absolute URLs with Node's URL parser, removes fragments and duplicates, and selects up to five HTTP(S) links on the same origin.
-- Routes pages with no eligible links directly to a report marked `not_checked`.
-- Classifies HTTP responses and continues after failed link requests, marking them `unverified`.
-- Produces one JSON report with evidence, timestamps, coverage limits, and link counts.
-
-The AI describes the supplied content; deterministic code generates check results. This project uses an existing model and does not train a custom model.
-
-## Repository files
-
-- `workflows/website-scanner-v1.json`: original demo milestone, restricted to selected Books to Scrape paths.
-- `workflows/website-scanner-v2.json`: current workflow with URL parsing, empty-link branching, and link-request error handling.
+Older exports are kept as development milestones.
 
 ## Local setup
 
-The tested environment is Windows, Docker Desktop, n8n **2.42.7**, and Ollama on the host computer. n8n's data is stored in the persistent `n8n_data` volume mounted at `/home/node/.n8n`.
+Developed on Windows with Docker Desktop, n8n **2.42.7**, and Ollama running on the host. No paid AI API key is required.
 
-1. Start Ollama with `qwen3:4b` available. The tested model supports thinking and structured output; this workflow sends `think: true`.
-2. Start n8n with the built-in `url` module allowed: `NODE_FUNCTION_ALLOW_BUILTIN=url`. In this tested internal-runner setup, the variable is on the n8n container. External runners require their own module configuration. Changing a container's environment requires recreating it while retaining its data volume; restarting alone does not add the setting.
-3. Open your local n8n editor and import `workflows/website-scanner-v2.json` into a new workflow.
-4. Check **Analyse Page**: its endpoint is `http://host.docker.internal:11434/api/chat`, connecting Docker to Ollama on the host. Other deployments may require a different address.
-5. Keep **Scan Settings** at `https://books.toscrape.com/` for the initial verification.
-6. Execute the workflow and inspect **Build Scan Report**.
+1. Start Ollama and make the model available with `ollama pull qwen3:4b`.
+2. Start n8n. For a new Docker setup, run the following in PowerShell:
 
-Keep node names aligned with their JavaScript references. No paid AI API key is used. Hardware, electricity, and connectivity remain necessary.
+   ```powershell
+   docker run -d --name n8n -p 127.0.0.1:5678:5678 -v n8n_data:/home/node/.n8n -e NODE_FUNCTION_ALLOW_BUILTIN=url docker.n8n.io/n8nio/n8n:2.42.7
+   ```
 
-Relevant documentation: [module access](https://docs.n8n.io/hosting/configuration/configuration-examples/modules-in-code-node/) and [task runners](https://docs.n8n.io/hosting/configuration/task-runners/).
+   If you already have a working container, reuse it. The `url` module is used to resolve relative links. If you need to change container environment variables, preserve the data volume when recreating the container. An external task runner needs its own module configuration.
 
-## Workflow design
+3. Open the [local n8n editor](http://localhost:5678). In the same project as both workflows, create a Data Table named `website_scans` with these columns:
 
-The initial sequence fetches and extracts the page, checks its basic elements, and requests and parses the AI summary. **Prepare Links** then selects the link sample.
+   | Column | Type |
+   | --- | --- |
+   | `scanned_url` | String |
+   | `scan_completed_at` | Date |
+   | `scan_status` | String |
+   | `report_json` | String |
 
-```mermaid
-flowchart TD
-    A[Prepare Links] --> B[No Links to Check]
-    B -->|true| E[Build Scan Report]
-    B -->|false| C[Check Link Status]
-    C --> D[Classify Link Result]
-    D --> E
-```
+4. Import both current workflow exports. The exports reference a table from the original installation; they do not create it or import its rows. In **Save Scan Report** and **Load Saved Scans**, reselect your local `website_scans` table. In **Save Scan Report**, verify these field expressions if you need to remap them:
 
-## Result interpretation
+   | Column | Expression |
+   | --- | --- |
+   | `scanned_url` | `{{ $json.scannedUrl }}` |
+   | `scan_completed_at` | `{{ $json.scanCompletedAt }}` |
+   | `scan_status` | `{{ $json.scanStatus }}` |
+   | `report_json` | `{{ JSON.stringify($json) }}` |
 
-| Result | Meaning |
-| --- | --- |
-| Page check `pass` | A nonempty element was found in fetched HTML |
-| Page check `needs_review` | The expected nonempty element was not found |
-| Link `pass` | HTTP response was 2xx |
-| Link `broken` | HTTP response was 404 or 410 |
-| Link `unverified` | Request failed, no status was available, access was denied, or rate limiting occurred |
-| Link `needs_review` | Other response, such as a server error |
-| Summary `not_checked` | No eligible links were selected |
-| Summary `completed` | The selected requests were processed; this can include failures |
+5. In **Website Scanner**, check that **Analyse Page** points to `http://host.docker.internal:11434/api/chat` for Docker Desktop, and leave **Scan Settings** on the demo URL for your first run. Do not rename nodes referenced by the workflow code.
 
-The `checked` count records attempted links, including unverified attempts. Neither a 2xx response nor a `completed` summary proves that a whole website is healthy.
+## Run the demo
 
-## Manual validation
+1. In **Website Scanner**, click **Execute workflow**. Check that **Save Scan Report** writes a `completed` row to `website_scans`.
+2. In **Scan History**, click **Publish**. Open the Webhook node's **Production URL**, normally [http://localhost:5678/webhook/scan-history](http://localhost:5678/webhook/scan-history). The published URL is available while n8n is running; the Docker command above binds it to this machine only.
+3. Expand a saved scan to see its findings or fetch failure reason. The test URL uses `/webhook-test/` and needs **Execute workflow** before each test request.
 
-Observed in the development environment:
+## How to read the results
 
-- Five selected links returned 200 and produced five passes.
-- A deliberately nonexistent path returned 404 and was labelled `broken`.
-- A simulated empty link list followed the true branch and produced a report with zero checks and `not_checked`.
-- One temporary `.invalid` URL produced an `unverified` result while four normal requests passed; the failing URL remained correctly associated with its result.
-- Temporary input overrides were removed after testing. The export contains normal link extraction and no injected network-test address.
-- The AI summary improved after scanner metadata was removed from its input and the prompt was narrowed to content description.
+- A **completed** scan means the workflow reached a report. It can still contain issues or unverified links. A failed fetch produces a report marked **failed**, with page and link checks skipped.
+- An unavailable or invalid AI response does not stop the page and link checks. Ollama summarizes content; the JavaScript rules determine the findings.
+- A link passes on HTTP 2xx; 404 or 410 is classified as broken. Request failures, denied access, and rate limits are unverified. Other unexpected responses need review. The attempted count includes unverified links.
+- The red dot currently tracks missing meta descriptions by exact scanned URL. A later explicit pass for the same URL clears it; failed scans leave the previous finding open. Older reports stay in history.
 
-The link timeout is configured to 15,000 ms, but a deliberate timeout has not been separately tested. These are manual checks, not a comprehensive automated test suite.
+## What was tested
 
-The shared export was checked for JSON validity, node references, branch routing, error configuration, and leftover test injections. Instance-specific metadata was removed and a leading tab was trimmed from the Ollama endpoint. The cleaned export has not yet been re-imported and executed.
+Development runs covered the normal scan, an HTTP 404 and a connection failure at the initial fetch, and an unavailable Ollama endpoint. Separate link checks covered a 404, an empty link sample, and a failed link request. Successful and failed scans were saved and rendered in the browser. The red-dot behavior was checked with simulated failed and passing rescans for the same URL, then the temporary test data was removed. A fresh import on a separate instance has not yet been verified.
 
-## Known limitations
+## Scope and limitations
 
-- Only one page and up to five eligible same-origin links are inspected; no recursive crawling.
-- Relative URLs are resolved against the requested URL. Redirected source pages and HTML `<base>` elements are not yet handled correctly.
-- Same-origin selection applies before requests; HTTP redirects can lead elsewhere.
-- The initial page fetch and Ollama call can still stop the workflow. Fetch errors are not gated before HTML extraction, so an error page could be analysed as page content.
-- JavaScript is not rendered. Page presence checks do not prove visual quality, accessibility, performance, or working forms and bookings.
-- AI summaries may be inaccurate. Prompts reduce unsupported claims but do not guarantee correctness or prevent every prompt-injection attempt.
-- No persistent scan history, dashboard, scheduling, client authentication, or automated fixes yet.
-- This remains a local prototype, not a public URL-submission service. Input validation, network restrictions, and redirect handling are required before public deployment.
-- The report's scope text still says “homepage”; the intended demo scans the homepage, but the configuration can accept other page URLs.
+The scanner checks fetched HTML without rendering JavaScript. It does not crawl the whole site, measure page speed, evaluate visual quality, submit forms, or apply fixes. Link selection uses the requested page URL as its base and does not account for HTML base tags or a different final page URL after redirects. Redirects can also take a selected link off the original origin. AI summaries can be inaccurate. Keep this prototype local; it is not designed for public URL submissions or authenticated client access.
 
-## Next milestones
-
-1. Initial fetch validation and graceful AI/fetch failures.
-2. Correct handling of redirects and HTML base URLs.
-3. Saved scan history and issue tracking.
-4. Dashboard with open, in-progress, resolved, and unverified findings.
-5. Human-reviewed remediation suggestions and verification through rescans.
-
-## Sharing and updates
-
-n8n edits are not automatically synchronized to GitHub. Export each milestone, review it for secrets or private data, and commit the reviewed workflow and documentation.
-
-This export contains no configured credentials or pinned execution data. Future exports must be reviewed again. Keep local n8n backups outside the repository: they may include account data and encryption keys. `.gitignore` cannot remove secrets embedded in tracked workflow JSON.
-
-No project license has been selected. Dependencies retain their own licenses.
+Keep n8n backups and real scan data out of Git. Review any workflow export for credentials, private URLs, and pinned data before committing it. No project license has been selected.
