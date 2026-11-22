@@ -1,13 +1,15 @@
 # AI-Assisted Website Scanner
 
-A local website audit prototype built with n8n, Ollama, and JavaScript. It checks one page and a small sample of its links, saves the report, and shows scan history and unresolved meta description findings in a browser. The demo target is [Books to Scrape](https://books.toscrape.com/).
+Paste a Books to Scrape page URL into a local dashboard to check its title, meta description, main heading, and up to five links. When the scan finishes, the same tab displays the saved report: what passed, what needs review, the evidence, and a suggested first fix. A local Ollama model describes the page; JavaScript determines the check results.
 
-| Workflow | What it does |
+## Workflows
+
+| Workflow | Role |
 | --- | --- |
-| [Website Scanner v4](workflows/website-scanner-v4.json) | Fetches a page, checks its title, meta description and H1, samples up to five eligible same-origin links, and saves one report per run. |
-| [Scan History v2](workflows/scan-history-v2.json) | Reads saved reports, shows the newest first, and flags unresolved meta description findings. |
+| [Website Scanner v5](workflows/website-scanner-v5.json) | Accepts a dashboard submission or manual run, checks the submitted page, and saves the report. A dashboard submission returns to scan history after the save. |
+| [Scan History v3](workflows/scan-history-v3.json) | Serves the URL form, groups saved scans by exact page URL, and shows the latest checklist, AI description, suggested fix, and earlier scan history. |
 
-Older exports are kept as development milestones.
+The dashboard currently accepts HTTPS URLs on `books.toscrape.com`. Different category pages work without changing a node. Support for other public domains is planned. Earlier workflow exports are available for reference.
 
 ## Local setup
 
@@ -44,9 +46,17 @@ Developed on Windows with Docker Desktop, n8n **2.42.7**, and Ollama running on 
 
 ## Run the demo
 
-1. In **Website Scanner**, click **Execute workflow**. Check that **Save Scan Report** writes a `completed` row to `website_scans`.
-2. In **Scan History**, click **Publish**. Open the Webhook node's **Production URL**, normally [http://localhost:5678/webhook/scan-history](http://localhost:5678/webhook/scan-history). The published URL is available while n8n is running; the Docker command above binds it to this machine only.
-3. Expand a saved scan to see its findings or fetch failure reason. The test URL uses `/webhook-test/` and needs **Execute workflow** before each test request.
+1. Publish **Website Scanner** and **Scan History** in n8n. The scanner receives form submissions at `POST /webhook/scan-website`; the dashboard reads history at `GET /webhook/scan-history`. Keep Docker and n8n running.
+2. On a new, empty table, seed the first report: run **Website Scanner** using its manual trigger. Its default URL is the Books to Scrape homepage. Confirm **Save Scan Report** writes a row.
+3. Open the [local dashboard](http://localhost:5678/webhook/scan-history). Paste this category URL into **Website URL** and click **Scan page** once:
+
+   ```text
+   https://books.toscrape.com/catalogue/category/books/mystery_3/index.html
+   ```
+
+4. Leave the tab open while the scanner runs. After the report is saved, **Return to Dashboard** redirects the browser to scan history in the same tab. Look for the Mystery card. Scan that URL again to add an entry to its history.
+
+For everyday use, bookmark the dashboard above. The n8n editor and PowerShell are unnecessary for submitting scans. The form and redirect use absolute localhost URLs; the Docker command above binds n8n to the local machine.
 
 ## How to read the results
 
@@ -55,12 +65,19 @@ Developed on Windows with Docker Desktop, n8n **2.42.7**, and Ollama running on 
 - A link passes on HTTP 2xx; 404 or 410 is classified as broken. Request failures, denied access, and rate limits are unverified. Other unexpected responses need review. The attempted count includes unverified links.
 - The red dot currently tracks missing meta descriptions by exact scanned URL. A later explicit pass for the same URL clears it; failed scans leave the previous finding open. Older reports stay in history.
 
-## What was tested
+## Validation
 
-Development runs covered the normal scan, an HTTP 404 and a connection failure at the initial fetch, and an unavailable Ollama endpoint. Separate link checks covered a 404, an empty link sample, and a failed link request. Successful and failed scans were saved and rendered in the browser. The red-dot behavior was checked with simulated failed and passing rescans for the same URL, then the temporary test data was removed. A fresh import on a separate instance has not yet been verified.
+Development runs covered the normal scan, an HTTP 404 and a connection failure at the initial fetch, and an unavailable Ollama endpoint. Separate link checks covered a 404, an empty link sample, and a failed link request. Successful and failed scans were saved and rendered in the browser. The red-dot behavior was checked with simulated failed and passing rescans for the same URL, then the temporary test data was removed. The scanner saved reports for the Travel category via webhook and the Mystery category via the dashboard. On the Mystery page, the title and H1 passed, the fetched HTML had no nonempty meta description, and all five sampled links returned HTTP 200. A later Mystery submission confirmed the same-tab return after saving. A fresh import on a separate instance has not yet been verified.
 
 ## Scope and limitations
 
 The scanner checks fetched HTML without rendering JavaScript. It does not crawl the whole site, measure page speed, evaluate visual quality, submit forms, or apply fixes. Link selection uses the requested page URL as its base and does not account for HTML base tags or a different final page URL after redirects. Redirects can also take a selected link off the original origin. AI summaries can be inaccurate. Keep this prototype local; it is not designed for public URL submissions or authenticated client access.
+
+## Roadmap
+
+- Accept public website URLs beyond the demo domain while keeping local network services private.
+- Show scan progress and explain when a page is blocked or there is too little HTML to assess.
+- Track unresolved heading, title, and link findings across rescans. A skipped check should not clear an open issue.
+- Add a site thumbnail or banner and test the documented setup on a clean instance.
 
 Keep n8n backups and real scan data out of Git. Review any workflow export for credentials, private URLs, and pinned data before committing it. No project license has been selected.
